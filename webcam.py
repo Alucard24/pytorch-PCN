@@ -8,7 +8,7 @@ if __name__ == '__main__':
     cam = cv2.VideoCapture(0)
     while cam.isOpened():
         ret, img = cam.read()
-        winlist = pcn.detect(img)
+        winlist = pcn.detect_track(img)
         img = pcn.draw(img, winlist)
         cv2.imshow('PCN', img)
         if cv2.waitKey(1) & 0xFF == ord('q'):

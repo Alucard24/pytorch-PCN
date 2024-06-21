@@ -4,7 +4,7 @@ import cv2
 import torch
 
 from .models import load_model
-from .utils import Window, draw_face
+from .utils import Window, draw_face, draw_points, crop_face, rotate_point
 
 
 
@@ -17,10 +17,27 @@ classThreshold_ = [0.37, 0.43, 0.97]
 nmsThreshold_ = [0.8, 0.8, 0.3]
 angleRange_ = 45
 stable_ = 0
+augScale_ = 0.15
+mean_ = np.array([104, 117, 123])
+period_ = 30
+trackThreshold_ = 0.9
 
+'''
+##video 
+#detector.SetMinFaceSize(40);
+minFace_ = 40 * 1.4
+#detector.SetImagePyramidScaleFactor(1.45);
+scale_ = 1.45
+#detector.SetDetectionThresh(0.5, 0.5, 0.98);
+classThreshold_ = [0.5, 0.5, 0.98]
+/// tracking
+
+#detector.SetVideoSmooth(true);
+stable_ = 1
+'''
 
 class Window2:
-    def __init__(self, x, y, w, h, angle, scale, conf):
+    def __init__(self, x, y, w, h, angle, scale, conf, points=[]):
         self.x = x
         self.y = y
         self.w = w
@@ -28,12 +45,12 @@ class Window2:
         self.angle = angle
         self.scale = scale
         self.conf = conf
-
+        self.points = points
 
 def preprocess_img(img, dim=None):
     if dim:
         img = cv2.resize(img, (dim, dim), interpolation=cv2.INTER_NEAREST)
-    return img - np.array([104, 117, 123])
+    return img - mean_
 
 def resize_img(img, scale:float):
     h, w = img.shape[:2]
@@ -45,7 +62,7 @@ def resize_img(img, scale:float):
 def pad_img(img:np.array):
     row = min(int(img.shape[0] * 0.2), 100)
     col = min(int(img.shape[1] * 0.2), 100)
-    ret = cv2.copyMakeBorder(img, row, row, col, col, cv2.BORDER_CONSTANT)
+    ret = cv2.copyMakeBorder(img, row, row, col, col, cv2.BORDER_CONSTANT, mean_)
     return ret
 
 def legal(x, y, img):
@@ -82,6 +99,10 @@ def smooth_window(winlist):
                 win.w = pwin.w
                 win.h = pwin.h
                 win.angle = pwin.angle
+                for k in range(len(pwin.points)):
+                    win.points[k] = ((4 * win.points[k][0] + 6 * pwin.points[k][0]) / 10.0, (4 * win.points[k][1] + 6 * pwin.points[k][1]) / 10.0)
+                    #win.points[k].x = (4 * win.points[k].x + 6 * pwin.points[k].x) / 10.0
+                    #win.points[k].y = (4 * win.points[k].y + 6 * pwin.points[k].y) / 10.0
             elif IoU(win, pwin) > 0.6:
                 win.conf = (win.conf + pwin.conf) / 2
                 win.x = (win.x + pwin.x) // 2
@@ -89,6 +110,11 @@ def smooth_window(winlist):
                 win.w = (win.w + pwin.w) // 2
                 win.h = (win.h + pwin.h) // 2
                 win.angle = smooth_angle(win.angle, pwin.angle)
+                for k in range(len(pwin.points)):
+                    win.points[k] = ((7 * win.points[k][0] + 3 * pwin.points[k][0]) / 10.0, (7 * win.points[k][1] + 3 * pwin.points[k][1]) / 10.0)
+                    #win.points[k].x = (7 * win.points[k].x + 3 * pwin.points[k].x) / 10.0
+                    #win.points[k].y = (7 * win.points[k].y + 3 * pwin.points[k].y) / 10.0
+
     prelist = winlist
     return winlist
 
@@ -142,6 +168,33 @@ def set_input(img):
     img = img.transpose((0, 3, 1, 2))
     return torch.FloatTensor(img)
 
+def set_video_smooth(stable):
+    stable_ = stable
+
+def set_min_facesize(minFace):
+    minFace_ = max(minFace, 20)
+    minFace_ *= 1.4
+
+def set_detection_thresh(thresh1:float, thresh2:float, thresh3:float):
+    classThreshold_[0] = thresh1
+    classThreshold_[1] = thresh2
+    classThreshold_[2] = thresh3
+    nmsThreshold_[0] = 0.8
+    nmsThreshold_[1] = 0.8
+    nmsThreshold_[2] = 0.3
+    stride_ = 8
+    angleRange_ = 45
+    augScale_ = 0.15
+    mean_ = np.array([104, 117, 123])
+
+def set_image_pyramid_scale_factor(factor:float):
+    scale_ = factor
+
+def set_tracking_period(period:int):
+    period_ = period
+
+def set_tracking_thresh(thres:float):
+    trackThreshold_ = thres
 
 def trans_window(img, imgPad, winlist):
     """transfer Window2 to Window1 in winlist"""
@@ -150,7 +203,12 @@ def trans_window(img, imgPad, winlist):
     ret = list()
     for win in winlist:
         if win.w > 0 and win.h > 0:
-            ret.append(Window(win.x-col, win.y-row, win.w, win.angle, win.conf))
+            for j in range(len(win.points)):
+                win.points[j] = (win.points[j][0] - col, win.points[j][1] - row)
+                #win.points[j].x -= col
+                #win.points[j].y -= row
+
+            ret.append(Window(win.x-col, win.y-row, win.w, win.angle, win.conf, win.points))
     return ret
 
 def stage1(img, imgPad, net, thres):
@@ -323,13 +381,118 @@ def detect(img, imgPad, nets):
     winlist = deleteFP(winlist)
     return winlist
 
+def track(imgPad, net, thres, dim, winlist):
+    length = len(winlist)
+    if length == 0:
+        return winlist
+
+    tmpwinlist = []
+    for i in range(length):
+        win = Window(winlist[i].x - augScale_ * winlist[i].w,
+              winlist[i].y - augScale_ * winlist[i].w,
+              winlist[i].w + 2 * augScale_ * winlist[i].w, winlist[i].angle, winlist[i].conf, winlist[i].points)
+        tmpwinlist.append(win)
+
+    datalist = []
+    for i in range(len(tmpwinlist)):
+        crop_img, pointlist = crop_face(imgPad, tmpwinlist[i], dim)
+        datalist.append(preprocess_img(crop_img, dim))
+
+    # network forward
+    net_input = set_input(datalist)
+    with torch.no_grad():
+        net.eval()
+        cls_prob, bbox, rotate, points_reg = net(net_input)
+
+    ret = []
+    for i in range(len(tmpwinlist)):
+        if cls_prob[i, 1].item() > thres:
+            cropX = tmpwinlist[i].x
+            cropY = tmpwinlist[i].y
+            cropW = tmpwinlist[i].width
+            centerX = (2 * tmpwinlist[i].x + tmpwinlist[i].width - 1) / 2
+            centerY = (2 * tmpwinlist[i].y + tmpwinlist[i].width - 1) / 2
+
+            points = []
+            for j in range(points_reg.shape[1] // 2):
+                points.append(rotate_point((points_reg[i, 2 * j].item() + 0.5) * (cropW - 1) + cropX,
+                                           (points_reg[i, 2 * j + 1].item() + 0.5) * (cropW - 1) + cropY,
+                                           centerX, centerY, tmpwinlist[i].angle))
+            #print(points)
+            sn = bbox[i, 0].item()
+            xn = bbox[i, 1].item()
+            yn = bbox[i, 2].item()
+            theta = -tmpwinlist[i].angle * np.pi / 180
+            w = int(sn * cropW)
+            x = int(cropX  - 0.5 * sn * cropW + cropW * sn * xn * np.cos(theta) - cropW * sn * yn * np.sin(theta) + 0.5 * cropW)
+            y = int(cropY  - 0.5 * sn * cropW + cropW * sn * xn * np.sin(theta) + cropW * sn * yn * np.cos(theta) + 0.5 * cropW)
+            angle = angleRange_ *  rotate[i, 0].item()
+            if thres > 0:
+                if legal(x, y, imgPad) and legal(x+w-1, y+w-1, imgPad):
+                    tmpW = int(w / (1 + 2 * augScale_))
+                    if tmpW >= 20:
+                        ret.append(Window2(x + augScale_ * tmpW,
+                                           y + augScale_ * tmpW,
+                                           tmpW, tmpW, winlist[i].angle + angle, winlist[i].scale, cls_prob[i, 1].item()))
+                        ret[len(ret) - 1].points = points
+            else:
+                tmpW = int(w / (1 + 2 * augScale_))
+                ret.append(Window2(x + augScale_ * tmpW,
+                                   y + augScale_ * tmpW,
+                                   tmpW, tmpW, winlist[i].angle + angle, winlist[i].scale, cls_prob[i, 1].item()))
+                ret[len(ret) - 1].points = points
+
+    return ret
+
 def pcn_detect(img, nets):
+    set_min_facesize(20)
+    set_image_pyramid_scale_factor(1.414)
+    set_detection_thresh(0.37, 0.43, 0.97)
+    set_tracking_period(30)
+    set_tracking_thresh(0.9)
+    set_video_smooth(0)
     imgPad = pad_img(img)
     winlist = detect(img, imgPad, nets)
+    #
+    pointslist = track(imgPad, nets[3], -1, 96, winlist);
+    for i in range(len(winlist)):
+        winlist[i].points = pointslist[i].points
+    #
     if stable_:
         winlist = smooth_window(winlist)
     return trans_window(img, imgPad, winlist)
 
+def pcn_detect_track(img, nets):
+    set_min_facesize(40)
+    set_image_pyramid_scale_factor(1.45)
+    set_detection_thresh(0.5, 0.5, 0.98)
+    set_tracking_period(30)
+    set_tracking_thresh(0.9)
+    set_video_smooth(1)
+    imgPad = pad_img(img)
+
+    detectflag = period_
+    prelist2 = []
+    winlist = prelist2
+    if detectflag == period_:
+        tmplist = detect(img, imgPad, nets)
+        for i in range(len(tmplist)):
+            winlist.append(tmplist[i])
+
+    winlist = NMS(winlist, False, nmsThreshold_[2])
+    winlist = track(imgPad, nets[3], trackThreshold_, 96, winlist)
+    winlist = NMS(winlist, False, nmsThreshold_[2])
+    winlist = deleteFP(winlist)
+
+    if stable_:
+        winlist = smooth_window(winlist)
+
+    prelist2 = winlist;
+    detectflag = detectflag - 1
+    if detectflag == 0:
+        detectflag = period_
+
+    return trans_window(img, imgPad, winlist)
 
 if __name__ == '__main__':
     # usage settings
@@ -346,6 +509,9 @@ if __name__ == '__main__':
     # draw image
     for face in faces:
         draw_face(img, face)
+        #
+        draw_points(img, face)
+        #
     # show image
     cv2.imshow("pytorch-PCN", img)
     cv2.waitKey(0)

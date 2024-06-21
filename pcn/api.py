@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 
 from .models import load_model
-from .utils import crop_face, draw_face
-from .pcn import pcn_detect
+from .utils import crop_face, draw_face, draw_points
+from .pcn import pcn_detect, pcn_detect_track, pad_img
 
 
 nets = load_model()    
@@ -11,7 +11,13 @@ nets = load_model()
 def detect(img):
     if type(img) == str:
         img = cv2.imread(img)
-    winlist = pcn_detect(img, nets) 
+    winlist = pcn_detect(img, nets)
+    return winlist
+
+def detect_track(img):
+    if type(img) == str:
+        img = cv2.imread(img)
+    winlist = pcn_detect_track(img, nets)
     return winlist
 
 def crop(img, winlist, size=200):
@@ -24,6 +30,7 @@ def crop(img, winlist, size=200):
 
 def draw(img, winlist):
     list(map(lambda win: draw_face(img, win), winlist))
+    list(map(lambda win: draw_points(img, win), winlist))
     return img
 
 def show(img, is_crop=False):

@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 class PCN1(nn.Module):
 
     def __init__(self):
@@ -25,6 +23,7 @@ class PCN1(nn.Module):
         rotate = F.softmax(self.rotate(x), dim=1)
         bbox = self.bbox(x)
         return cls_prob, rotate, bbox
+
 
 # caffe output for data shape
 # data                        	 (1, 3, 24, 24)
@@ -72,7 +71,8 @@ class PCN2(nn.Module):
         x = F.pad(x, (0, 1, 0, 1))
         x = F.relu(self.mp(x), inplace=True)
         x = F.relu(self.conv3(x), inplace=True)
-        x = x.view(batch_size, -1)
+        #x = x.view(batch_size, -1)
+        x = x.reshape(batch_size, -1)
         x = F.relu(self.fc(x), inplace=True)
         cls_prob = F.softmax(self.cls_prob(x), dim=1)
         rotate = F.softmax(self.rotate(x), dim=1)
@@ -105,7 +105,6 @@ class PCN2(nn.Module):
 # fc6_2                       	 (3, 140) (3,)
 # bbox_reg_2                  	 (3, 140) (3,)
 
-
 class PCN3(nn.Module):
 
     def __init__(self):
@@ -135,12 +134,142 @@ class PCN3(nn.Module):
         x = self.conv3(x)
         x = F.relu(self.mp2(x), inplace=True)
         x = F.relu(self.conv4(x), inplace=True)
-        x = x.view(batch_size, -1)
+        #x = x.view(batch_size, -1)
+        x = x.reshape(batch_size, -1)
         x = F.relu(self.fc(x), inplace=True)
         cls_prob = F.softmax(self.cls_prob(x), dim=1)
         rotate = self.rotate(x)
         bbox = self.bbox(x)
         return cls_prob, rotate, bbox
+
+
+'''
+# valid
+class PCN3(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        # Convolutional and Pooling Layers
+        self.conv1 = nn.Conv2d(3, 24, kernel_size=3, stride=1)
+        self.pool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        self.conv2 = nn.Conv2d(24, 48, kernel_size=3, stride=1)
+        self.pool2 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        self.conv3 = nn.Conv2d(48, 96, kernel_size=3, stride=1)
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        self.conv4 = nn.Conv2d(96, 144, kernel_size=2, stride=1)
+        
+        # Fully Connected Layers
+        self.fc = nn.Linear(144 * 3 * 3, 192)  # Adjust the input size based on the output size of conv4
+        self.cls_prob = nn.Linear(192, 2)
+        
+        # Regression Outputs
+        self.bbox = nn.Linear(192, 3)
+        self.rotate = nn.Linear(192, 1)
+
+    def forward(self, x):
+        # Conv1 Block
+        x = self.conv1(x)  # Output size: (24, 48, 48)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = self.pool1(x)  # Output size: (24, 24, 24)
+        x = F.relu(x)
+        
+        # Conv2 Block
+        x = self.conv2(x)  # Output size: (48, 24, 24)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = self.pool2(x)  # Output size: (48, 12, 12)
+        x = F.relu(x)
+        
+        # Conv3 Block
+        x = self.conv3(x)  # Output size: (96, 12, 12)
+        x = self.pool3(x)  # Output size: (96, 6, 6)
+        x = F.relu(x)
+        
+        # Conv4 Block
+        x = self.conv4(x)  # Output size: (144, 5, 5) because kernel size is 2
+        x = F.relu(x)
+        
+        # Flatten the tensor for fully connected layers
+        x = x.reshape(x.size(0), -1)  # Output size: (batch_size, 144 * 3 * 3)
+        
+        # FC Layer
+        x = self.fc(x)  # Output size: (batch_size, 192)
+        x = F.relu(x)
+        
+        # Classification Output
+        cls_prob = F.softmax(self.cls_prob(x), dim=1)
+        
+        # Regression Outputs
+        rotate = self.rotate(x)
+        bbox = self.bbox(x)
+        
+        return cls_prob, rotate, bbox
+'''
+'''
+# broken
+class PCN3(nn.Module):
+    def __init__(self):
+        super(PCN3, self).__init__()
+        
+        # Convolutional and Pooling Layers
+        self.conv1 = nn.Conv2d(3, 24, kernel_size=3, padding=1)
+        self.pool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        self.conv2 = nn.Conv2d(24, 48, kernel_size=3, padding=1)
+        self.pool2 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        self.conv3 = nn.Conv2d(48, 96, kernel_size=3, padding=1)
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2, padding=1)
+        
+        self.conv4 = nn.Conv2d(96, 144, kernel_size=2)
+        
+        # Fully Connected Layers
+        self.fc = nn.Linear(144 * 3 * 3, 192)  # Adjust the input size based on the output size of conv4
+        self.cls_prob = nn.Linear(192, 2)
+        
+        # Regression Outputs
+        self.bbox = nn.Linear(192, 3)
+        self.rotate = nn.Linear(192, 1)
+
+    def forward(self, x):
+        # Conv1 Block
+        x = self.conv1(x)  # Output size: (24, 48, 48)
+        x = self.pool1(x)  # Output size: (24, 24, 24)
+        x = F.relu(x)
+        
+        # Conv2 Block
+        x = self.conv2(x)  # Output size: (48, 24, 24)
+        x = self.pool2(x)  # Output size: (48, 12, 12)
+        x = F.relu(x)
+        
+        # Conv3 Block
+        x = self.conv3(x)  # Output size: (96, 12, 12)
+        x = self.pool3(x)  # Output size: (96, 6, 6)
+        x = F.relu(x)
+        
+        # Conv4 Block
+        x = self.conv4(x)  # Output size: (144, 5, 5) because kernel size is 2
+        x = F.relu(x)
+        
+        # Flatten the tensor for fully connected layers
+        x = x.reshape(x.size(0), -1)  # Output size: (batch_size, 144 * 3 * 3)
+        
+        # FC Layer
+        x = self.fc(x)  # Output size: (batch_size, 192)
+        x = F.relu(x)
+        
+        # Classification Output
+        cls_prob = F.softmax(self.cls_prob(x), dim=1)
+        
+        # Regression Outputs
+        rotate = self.rotate(x)
+        bbox = self.bbox(x)
+        
+        return cls_prob, rotate, bbox
+'''
+
 
 # caffe output for data shape
 # data                        	 (1, 3, 48, 48)
@@ -171,13 +300,107 @@ class PCN3(nn.Module):
 # bbox_reg_3                  	 (3, 192) (3,)
 # rotate_reg_3                	 (1, 192) (1,)
 
+class PCNTracking(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        
+        # conv1
+        self.conv1_1 = nn.Conv2d(3, 8, kernel_size=3, stride=1)
+        self.conv1_2 = nn.Conv2d(8, 8, kernel_size=1, stride=1)
+        self.pool1 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        # conv2
+        self.conv2_1 = nn.Conv2d(8, 16, kernel_size=3, stride=1)
+        self.conv2_2 = nn.Conv2d(16, 16, kernel_size=1, stride=1)
+        self.pool2 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        # conv3
+        self.conv3_1 = nn.Conv2d(16, 32, kernel_size=3, stride=1)
+        self.conv3_2 = nn.Conv2d(32, 32, kernel_size=1, stride=1)
+        self.pool3 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        # conv4
+        self.conv4_1 = nn.Conv2d(32, 64, kernel_size=3, stride=1)
+        self.conv4_2 = nn.Conv2d(64, 64, kernel_size=1, stride=1)
+        self.pool4 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        # conv5
+        self.conv5_1 = nn.Conv2d(64, 128, kernel_size=3, stride=1)
+        self.conv5_2 = nn.Conv2d(128, 128, kernel_size=1, stride=1)
+        self.pool5 = nn.MaxPool2d(kernel_size=3, stride=2)
+        
+        # fc layers
+        self.fc6 = nn.Linear(128 * 3 * 3, 256)  # assuming input image size is 96x96
+
+        self.fc7 = nn.Linear(256, 2)
+        self.bbox_reg = nn.Linear(256, 3)
+        self.rotate_reg = nn.Linear(256, 1)
+        self.points_reg = nn.Linear(256, 28)
+
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        # conv1
+        x = F.pad(x, (1, 1, 1, 1))
+        x = F.relu(self.conv1_1(x), inplace=True)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = F.relu(self.conv1_2(x), inplace=True)
+        x = self.pool1(x)
+        
+        # conv2
+        x = F.pad(x, (1, 1, 1, 1))
+        x = F.relu(self.conv2_1(x), inplace=True)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = F.relu(self.conv2_2(x), inplace=True)
+        x = self.pool2(x)
+        
+        # conv3
+        x = F.pad(x, (1, 1, 1, 1))
+        x = F.relu(self.conv3_1(x), inplace=True)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = F.relu(self.conv3_2(x), inplace=True)
+        x = self.pool3(x)
+        
+        # conv4
+        x = F.pad(x, (1, 1, 1, 1))
+        x = F.relu(self.conv4_1(x), inplace=True)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = F.relu(self.conv4_2(x), inplace=True)
+        x = self.pool4(x)
+        
+        # conv5
+        x = F.pad(x, (1, 1, 1, 1))
+        x = F.relu(self.conv5_1(x), inplace=True)
+        x = F.pad(x, (0, 1, 0, 1))
+        x = F.relu(self.conv5_2(x), inplace=True)
+        x = self.pool5(x)
+        
+        # Flatten the output for the fully connected layers
+        #x = x.view(x.size(0), -1)
+        x = x.reshape(batch_size, -1)
+
+        # fc layers
+        x = F.relu(self.fc6(x), inplace=True)
+        
+        cls_prob = F.softmax(self.fc7(x), dim=1)
+        # BBox regression
+        bbox_reg = self.bbox_reg(x)
+        # Rotate regression
+        rotate_reg = self.rotate_reg(x)
+        # Points regression
+        points_reg = self.points_reg(x)
+
+        return cls_prob, bbox_reg, rotate_reg, points_reg
+
 import os
 from os.path import join as pjoin
 
 def load_model():
     cwd = os.path.dirname(__file__)
-    pcn1, pcn2, pcn3 = PCN1(), PCN2(), PCN3()
+    pcn1, pcn2, pcn3, pcn4 = PCN1(), PCN2(), PCN3(), PCNTracking()
     pcn1.load_state_dict(torch.load(pjoin(cwd, 'pth/pcn1_sd.pth')))
     pcn2.load_state_dict(torch.load(pjoin(cwd, 'pth/pcn2_sd.pth')))
     pcn3.load_state_dict(torch.load(pjoin(cwd, 'pth/pcn3_sd.pth')))
-    return pcn1, pcn2, pcn3
+    pcn4.load_state_dict(torch.load(pjoin(cwd, 'pth/pcn-tracking.pth')))
+    return pcn1, pcn2, pcn3, pcn4
